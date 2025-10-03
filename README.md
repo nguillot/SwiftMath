@@ -178,7 +178,7 @@ This is a list of formula types that the library currently supports:
 * Math spacing
 * Overline and underline
 * Math accents
-* Matrices
+* Matrices (including `\smallmatrix` and starred variants like `\pmatrix*[c]` with alignment)
 * Equation alignment
 * Change bold, roman, caligraphic and other font styles (\\bf, \\text, etc.)
 * Most commonly used math symbols
