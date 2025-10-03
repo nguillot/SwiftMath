@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m \"$(cat <<''EOF''\nSupport all standard LaTeX math delimiters\n\nThis commit adds comprehensive support for both inline and display math delimiters:\n\n**Inline delimiters** (text style, compact):\n- $...$ (TeX style)\n- \\(...\\) (LaTeX style)\n\n**Display delimiters** (display style, larger operators):\n- $$..$$(TeX style)\n- \\[...\\] (LaTeX style)\n\nThe parser automatically detects delimiters, strips them, and sets\nthe appropriate math mode. Inline mode automatically prepends \\textstyle\nfor proper compact rendering.\n\n**Backward compatibility**: Equations without explicit delimiters continue\nto work as before, defaulting to display mode.\n\nAlso updated cases environment to accept 1 or 2 columns for better\ncompatibility with various LaTeX use cases.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
