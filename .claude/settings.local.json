@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(swift test:*)",
+      "Bash(swift build:*)",
+      "Bash(git stash:*)",
+      "Bash(git log:*)",
+      "Bash(git checkout:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git reset:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd basic LaTeX operators and symbols\n\nThis commit adds support for the following LaTeX commands:\n- Multiple integrals: \\iint, \\iiint, \\iiiint\n- Logic operators: \\implies, \\nexists  \n- Modular arithmetic: \\mod, \\pmod{n}\n\nThe \\pmod command creates a properly formatted (mod n) expression\nwith parentheses and spacing.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

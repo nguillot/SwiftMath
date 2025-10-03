@@ -184,6 +184,13 @@ This is a list of formula types that the library currently supports:
 * Most commonly used math symbols
 * Colors for both text and background
 
+#### New LaTeX Commands
+
+Recent additions include:
+* Multiple integrals: `\iint`, `\iiint`, `\iiiint`
+* Logic operators: `\implies`, `\nexists`
+* Modular arithmetic: `\mod`, `\pmod{n}` (renders as (mod n))
+
 Note: SwiftMath only supports the commands in LaTeX's math mode. There is
 also no language support for other than west European langugages and some
 Cyrillic characters. There would be two ways to support more languages:
