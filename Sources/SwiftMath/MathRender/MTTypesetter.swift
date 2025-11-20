@@ -408,7 +408,7 @@ class MTTypesetter {
         let preprocessedAtoms = self.preprocessMathList(mathList)
         let typesetter = MTTypesetter(withFont:font, style:style, cramped:cramped, spaced:spaced, maxWidth: maxWidth)
         typesetter.createDisplayAtoms(preprocessedAtoms)
-        let lastAtom = mathList!.atoms.last
+        let lastAtom = mathList?.atoms.last
         let last = lastAtom?.indexRange ?? NSMakeRange(0, 0)
         let line = MTMathListDisplay(withDisplays: typesetter.displayAtoms, range: NSMakeRange(0, NSMaxRange(last)))
         return line
@@ -437,10 +437,16 @@ class MTTypesetter {
         // Specifically rules 5 & 6 in Appendix G are handled by finalize.
         // This function does not do a complete preprocessing as specified by TeX either. It removes any special atom types
         // that are not included in TeX and applies Rule 14 to merge ordinary characters.
+        
+        // Guard against nil input
+        guard let mathList = ml, !mathList.atoms.isEmpty else {
+            return []
+        }
+        
         var preprocessed = [MTMathAtom]() //  arrayWithCapacity:ml.atoms.count)
         var prevNode:MTMathAtom! = nil
-        preprocessed.reserveCapacity(ml!.atoms.count)
-        for atom in ml!.atoms {
+        preprocessed.reserveCapacity(mathList.atoms.count)
+        for atom in mathList.atoms {
             if atom.type == .variable || atom.type == .number {
                 // This is not a TeX type node. TeX does this during parsing the input.
                 // switch to using the italic math font
@@ -1194,12 +1200,16 @@ class MTTypesetter {
 
                         let accent = atom as! MTAccent?
                         let display = self.makeAccent(accent)
-                        displayAtoms.append(display!)
-                        currentPosition.x += display!.width;
+                        
+                        // Only add if display was successfully created
+                        if let accentDisplay = display {
+                            displayAtoms.append(accentDisplay)
+                            currentPosition.x += accentDisplay.width;
 
-                        // add super scripts || subscripts
-                        if atom.subScript != nil || atom.superScript != nil {
-                            self.makeScripts(atom, display:display, index:UInt(atom.indexRange.location), delta:0)
+                            // add super scripts || subscripts
+                            if atom.subScript != nil || atom.superScript != nil {
+                                self.makeScripts(atom, display:accentDisplay, index:UInt(atom.indexRange.location), delta:0)
+                            }
                         }
                     }
                     
@@ -2400,13 +2410,18 @@ class MTTypesetter {
     }
     
     func makeAccent(_ accent:MTAccent?) -> MTDisplay? {
-        var accentee = MTTypesetter.createLineForMathList(accent!.innerList, font:font, style:style, cramped:true)
-        if accent!.nucleus.isEmpty {
+        // Guard against nil accent or nil innerList
+        guard let accent = accent, let innerList = accent.innerList else {
+            return nil
+        }
+        
+        var accentee = MTTypesetter.createLineForMathList(innerList, font:font, style:style, cramped:true)
+        if accent.nucleus.isEmpty {
             // no accent!
             return accentee
         }
-        let end = accent!.nucleus.index(before: accent!.nucleus.endIndex)
-        var accentGlyph = self.findGlyphForCharacterAtIndex(end, inString:accent!.nucleus)
+        let end = accent.nucleus.index(before: accent.nucleus.endIndex)
+        var accentGlyph = self.findGlyphForCharacterAtIndex(end, inString:accent.nucleus)
         let accenteeWidth = accentee!.width;
         var glyphAscent=CGFloat(0), glyphDescent=CGFloat(0), glyphWidth=CGFloat(0)
         accentGlyph = self.findVariantGlyph(accentGlyph, withMaxWidth:accenteeWidth, maxWidth:&glyphAscent, glyphDescent:&glyphDescent, glyphWidth:&glyphWidth)
@@ -2414,26 +2429,26 @@ class MTTypesetter {
         let skew = self.getSkew(accent, accenteeWidth:accenteeWidth, accentGlyph:accentGlyph)
         let height = accentee!.ascent - delta;  // This is always positive since delta <= height.
         let accentPosition = CGPointMake(skew, height);
-        let accentGlyphDisplay = MTGlyphDisplay(withGlpyh: accentGlyph, range: accent!.indexRange, font: styleFont)
+        let accentGlyphDisplay = MTGlyphDisplay(withGlpyh: accentGlyph, range: accent.indexRange, font: styleFont)
         accentGlyphDisplay.ascent = glyphAscent;
         accentGlyphDisplay.descent = glyphDescent;
         accentGlyphDisplay.width = glyphWidth;
         accentGlyphDisplay.position = accentPosition;
 
-        if self.isSingleCharAccentee(accent) && (accent!.subScript != nil || accent!.superScript != nil) {
+        if self.isSingleCharAccentee(accent) && (accent.subScript != nil || accent.superScript != nil) {
             // Attach the super/subscripts to the accentee instead of the accent.
-            let innerAtom = accent!.innerList!.atoms[0]
-            innerAtom.superScript = accent!.superScript;
-            innerAtom.subScript = accent!.subScript;
-            accent?.superScript = nil;
-            accent?.subScript = nil;
+            let innerAtom = innerList.atoms[0]
+            innerAtom.superScript = accent.superScript;
+            innerAtom.subScript = accent.subScript;
+            accent.superScript = nil;
+            accent.subScript = nil;
             // Remake the accentee (now with sub/superscripts)
             // Note: Latex adjusts the heights in case the height of the char is different in non-cramped mode. However this shouldn't be the case since cramping
             // only affects fractions and superscripts. We skip adjusting the heights.
-            accentee = MTTypesetter.createLineForMathList(accent!.innerList, font:font, style:style, cramped:cramped)
+            accentee = MTTypesetter.createLineForMathList(innerList, font:font, style:style, cramped:cramped)
         }
 
-        let display = MTAccentDisplay(withAccent:accentGlyphDisplay, accentee:accentee, range:accent!.indexRange)
+        let display = MTAccentDisplay(withAccent:accentGlyphDisplay, accentee:accentee, range:accent.indexRange)
         display.width = accentee!.width;
         display.descent = accentee!.descent;
         let ascent = accentee!.ascent - delta + glyphAscent;

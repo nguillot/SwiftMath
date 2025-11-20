@@ -3376,6 +3376,364 @@ final class MTTypesetterTests: XCTestCase {
             }
         }
     }
+    
+    // MARK: - Safety and Edge Case Tests (Code Review Step 1)
+    
+    /// Test that nil math lists are handled safely
+    func testSafety_NilMathList() throws {
+        let display = MTTypesetter.createLineForMathList(nil, font: self.font, style: .display)
+        // Should return empty display without crashing
+        XCTAssertNotNil(display, "Should handle nil math list safely")
+        XCTAssertEqual(display?.subDisplays.count ?? 0, 0, "Nil list should produce empty display")
+    }
+    
+    /// Test that empty math lists are handled correctly
+    func testSafety_EmptyMathList() throws {
+        let mathList = MTMathList()
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should not crash and return valid empty display
+        XCTAssertNotNil(display, "Should handle empty math list")
+        XCTAssertEqual(display?.subDisplays.count ?? 0, 0, "Empty list should have no sub-displays")
+    }
+    
+    /// Test maxWidth of 0 doesn't cause division by zero
+    func testSafety_ZeroMaxWidth() throws {
+        let mathList = MTMathAtomFactory.mathListForCharacters("x+y")
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display, maxWidth: 0)
+        
+        // Should not crash with maxWidth = 0
+        XCTAssertNotNil(display, "Should handle maxWidth of 0")
+        XCTAssertGreaterThan(display!.width, 0, "Should still calculate width")
+    }
+    
+    /// Test negative maxWidth is handled
+    func testSafety_NegativeMaxWidth() throws {
+        let mathList = MTMathAtomFactory.mathListForCharacters("x+y")
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display, maxWidth: -100)
+        
+        // Should not crash with negative maxWidth
+        XCTAssertNotNil(display, "Should handle negative maxWidth")
+    }
+    
+    /// Test extremely narrow maxWidth
+    func testSafety_ExtremelyNarrowMaxWidth() throws {
+        let mathList = MTMathAtomFactory.mathListForCharacters("abcdefghij")
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display, maxWidth: 1)
+        
+        // Should not crash with very narrow width
+        XCTAssertNotNil(display, "Should handle extremely narrow width")
+    }
+    
+    /// Test very large maxWidth doesn't cause issues
+    func testSafety_VeryLargeMaxWidth() throws {
+        let mathList = MTMathAtomFactory.mathListForCharacters("x+y")
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display, maxWidth: CGFloat.greatestFiniteMagnitude)
+        
+        // Should handle very large maxWidth
+        XCTAssertNotNil(display, "Should handle very large maxWidth")
+        XCTAssertEqual(display?.subDisplays.count, 1, "Should not break with infinite width")
+    }
+    
+    /// Test with invalid Unicode characters in text mode
+    func testSafety_InvalidUnicodeInText() throws {
+        let mathList = MTMathList()
+        let atom = MTMathAtom(type: .ordinary, value: "text")
+        // Note: Swift strings are always valid UTF-8, but we test edge cases
+        atom.nucleus = "\u{FFFD}" // Replacement character
+        mathList.add(atom)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should not crash with replacement character
+        XCTAssertNotNil(display, "Should handle replacement character")
+    }
+    
+    /// Test with atom that has scripts but is invalid type for scripts
+    func testSafety_InvalidScriptCombination() throws {
+        let mathList = MTMathList()
+        // Instead of boundary (which has validation), test with ordinary atom
+        // to ensure typesetter handles atoms with scripts correctly
+        let atom = MTMathAtom(type: .ordinary, value: "x")
+        
+        let superscript = MTMathList()
+        superscript.add(MTMathAtomFactory.atom(forCharacter: "2"))
+        atom.superScript = superscript
+        
+        mathList.add(atom)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle atoms with scripts
+        XCTAssertNotNil(display, "Should handle atoms with scripts")
+    }
+    
+    /// Test deeply nested fractions don't cause stack overflow
+    func testSafety_DeeplyNestedFractions() throws {
+        // Create nested fractions: a/(b/(c/(d/e)))
+        var innerList = MTMathList()
+        innerList.add(MTMathAtomFactory.atom(forCharacter: "e"))
+        
+        for char in ["d", "c", "b", "a"].reversed() {
+            let fraction = MTFraction()
+            let numerator = MTMathList()
+            numerator.add(MTMathAtomFactory.atom(forCharacter: Character(char)))
+            fraction.numerator = numerator
+            fraction.denominator = innerList
+            
+            innerList = MTMathList()
+            innerList.add(fraction)
+        }
+        
+        let display = MTTypesetter.createLineForMathList(innerList, font: self.font, style: .display)
+        
+        // Should not cause stack overflow
+        XCTAssertNotNil(display, "Should handle deeply nested fractions")
+    }
+    
+    /// Test radical with nil radicand
+    func testSafety_RadicalWithNilRadicand() throws {
+        let mathList = MTMathList()
+        let radical = MTRadical()
+        radical.radicand = nil
+        mathList.add(radical)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle nil radicand gracefully
+        XCTAssertNotNil(display, "Should handle radical with nil radicand")
+    }
+    
+    /// Test fraction with nil numerator
+    func testSafety_FractionWithNilNumerator() throws {
+        let mathList = MTMathList()
+        let fraction = MTFraction()
+        fraction.numerator = nil
+        let denominator = MTMathList()
+        denominator.add(MTMathAtomFactory.atom(forCharacter: "2"))
+        fraction.denominator = denominator
+        mathList.add(fraction)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle nil numerator gracefully
+        XCTAssertNotNil(display, "Should handle fraction with nil numerator")
+    }
+    
+    /// Test fraction with nil denominator
+    func testSafety_FractionWithNilDenominator() throws {
+        let mathList = MTMathList()
+        let fraction = MTFraction()
+        let numerator = MTMathList()
+        numerator.add(MTMathAtomFactory.atom(forCharacter: "1"))
+        fraction.numerator = numerator
+        fraction.denominator = nil
+        mathList.add(fraction)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle nil denominator gracefully
+        XCTAssertNotNil(display, "Should handle fraction with nil denominator")
+    }
+    
+    /// Test large operator without limits
+    func testSafety_LargeOperatorWithNilLimits() throws {
+        let mathList = MTMathList()
+        // Create large operator without limits
+        let largeOp = MTLargeOperator(value: "∑", limits: false)
+        mathList.add(largeOp)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle large op without limits
+        XCTAssertNotNil(display, "Should handle large operator without limits")
+    }
+    
+    /// Test inner atom with nil content
+    func testSafety_InnerAtomWithNilContent() throws {
+        let mathList = MTMathList()
+        let inner = MTInner()
+        inner.innerList = nil
+        mathList.add(inner)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle inner with nil content
+        XCTAssertNotNil(display, "Should handle inner atom with nil content")
+    }
+    
+    /// Test accent with nil inner list
+    func testSafety_AccentWithNilInner() throws {
+        let mathList = MTMathList()
+        let accent = MTAccent(value: "\u{0302}") // Circumflex
+        accent.innerList = nil
+        mathList.add(accent)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle accent with nil inner list
+        XCTAssertNotNil(display, "Should handle accent with nil inner list")
+    }
+    
+    /// Test math table (matrix) with empty cells
+    func testSafety_MathTableWithEmptyCells() throws {
+        let mathList = MTMathList()
+        let table = MTMathTable(environment: "matrix")
+        table.set(cell: MTMathList(), forRow: 0, column: 0)
+        table.set(cell: MTMathList(), forRow: 0, column: 1)
+        table.set(cell: MTMathList(), forRow: 1, column: 0)
+        table.set(cell: MTMathList(), forRow: 1, column: 1)
+        mathList.add(table)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle table with empty cells
+        XCTAssertNotNil(display, "Should handle math table with empty cells")
+    }
+    
+    /// Test with atom having very long nucleus string
+    func testSafety_VeryLongNucleus() throws {
+        let mathList = MTMathList()
+        let atom = MTMathAtom(type: .ordinary, value: String(repeating: "x", count: 1000))
+        mathList.add(atom)
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle very long nucleus
+        XCTAssertNotNil(display, "Should handle atom with very long nucleus")
+    }
+    
+    /// Test spacing calculation with various atom types
+    func testSafety_SpacingWithAllAtomTypes() throws {
+        // Test that spacing calculation works for various atom type combinations
+        // Note: Some types require special constructors and can't be created with MTMathAtom(type:value:)
+        // Note: .boundary type cannot be added to mathlist (validation prevents it)
+        let basicAtomTypes: [MTMathAtomType] = [
+            .ordinary, .number, .variable, .binaryOperator, .unaryOperator,
+            .relation, .open, .close, .punctuation, .placeholder
+        ]
+        
+        // Test each basic type renders without crashing
+        for atomType in basicAtomTypes {
+            let mathList = MTMathList()
+            let atom = MTMathAtom(type: atomType, value: "x")
+            mathList.add(atom)
+            
+            let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+            XCTAssertNotNil(display, "Should handle atom type \(atomType)")
+        }
+        
+        // Test special atom types with proper constructors
+        let mathList2 = MTMathList()
+        mathList2.add(MTFraction())
+        mathList2.add(MTRadical())
+        mathList2.add(MTLargeOperator(value: "∑", limits: false))
+        mathList2.add(MTInner())
+        mathList2.add(MTAccent(value: "^"))
+        mathList2.add(MTMathTable(environment: "matrix"))
+        mathList2.add(MTMathSpace(space: 5))
+        
+        let display2 = MTTypesetter.createLineForMathList(mathList2, font: self.font, style: .display)
+        XCTAssertNotNil(display2, "Should handle special atom types")
+    }
+    
+    /// Test style changes don't cause issues
+    func testSafety_StyleChangesWithFont() throws {
+        let mathList = MTMathList()
+        
+        // Add style atom using proper constructor
+        let styleAtom = MTMathStyle(style: .text)
+        mathList.add(styleAtom)
+        
+        // Add content
+        mathList.add(MTMathAtomFactory.atom(forCharacter: "x"))
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle style changes
+        XCTAssertNotNil(display, "Should handle style changes")
+    }
+    
+    /// Test with special mathematical characters
+    func testSafety_SpecialMathCharacters() throws {
+        let specialChars = ["∞", "∫", "∑", "∏", "√", "∂", "∇", "±", "×", "÷", "≠", "≈", "≤", "≥"]
+        
+        for char in specialChars {
+            let mathList = MTMathList()
+            let atom = MTMathAtom(type: .ordinary, value: char)
+            mathList.add(atom)
+            
+            let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+            XCTAssertNotNil(display, "Should handle special character: \(char)")
+        }
+    }
+    
+    /// Test line breaking with maxWidth just barely too small
+    func testSafety_LineBreakingEdgeCases() throws {
+        let mathList = MTMathAtomFactory.mathListForCharacters("x+y")
+        
+        // Get the natural width
+        let naturalDisplay = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display, maxWidth: 0)
+        let naturalWidth = naturalDisplay!.width
+        
+        // Test with width just slightly less than natural
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display, maxWidth: naturalWidth - 0.01)
+        
+        // Should not crash and should break into lines
+        XCTAssertNotNil(display, "Should handle edge case width for line breaking")
+    }
+    
+    /// Test with color atoms
+    func testSafety_ColorAtoms() throws {
+        let mathList = MTMathList()
+        
+        let colorAtom = MTMathAtom(type: .color, value: "")
+        mathList.add(colorAtom)
+        mathList.add(MTMathAtomFactory.atom(forCharacter: "x"))
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle color atoms
+        XCTAssertNotNil(display, "Should handle color atoms")
+    }
+    
+    /// Test with space atoms of various sizes
+    func testSafety_SpaceAtoms() throws {
+        let mathList = MTMathList()
+        
+        let spaceAtom = MTMathSpace(space: 10)
+        mathList.add(MTMathAtomFactory.atom(forCharacter: "x"))
+        mathList.add(spaceAtom)
+        mathList.add(MTMathAtomFactory.atom(forCharacter: "y"))
+        
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)
+        
+        // Should handle space atoms
+        XCTAssertNotNil(display, "Should handle space atoms")
+        XCTAssertGreaterThan(display!.width, 10, "Should include space width")
+    }
+    
+    /// Test index ranges are valid
+    func testSafety_IndexRangesValid() throws {
+        let mathList = MTMathAtomFactory.mathListForCharacters("xyz")
+        let display = MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display)!
+        
+        // Check that index ranges are valid
+        func checkRanges(_ display: MTDisplay) {
+            XCTAssertNotEqual(display.range.location, NSNotFound, "Range location should be valid")
+            XCTAssertGreaterThanOrEqual(display.range.location, 0, "Range location should be non-negative")
+            XCTAssertGreaterThanOrEqual(display.range.length, 0, "Range length should be non-negative")
+            
+            if let mathDisplay = display as? MTMathListDisplay {
+                for subDisplay in mathDisplay.subDisplays {
+                    checkRanges(subDisplay)
+                }
+            }
+        }
+        
+        checkRanges(display)
+    }
 
 }
+
 
