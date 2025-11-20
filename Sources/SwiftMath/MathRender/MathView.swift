@@ -24,14 +24,15 @@ import SwiftUI
 ///     textColor: .black,
 /// )
 /// ```
-@available(iOS 13.0, macOS 10.15, *)
+@available(iOS 14.0, macOS 11.0, *)
 public struct MathView: View {
     private let latex: String
     private var fontSize: CGFloat
-    private var textColor: MTColor
+    private var textColor: Color
     private var labelMode: MTMathUILabelMode
     private var textAlignment: MTTextAlignment
     private var contentInsets: MTEdgeInsets
+    private var lineLimit: Int
 
     /// Creates a MathView with the specified parameters.
     /// - Parameters:
@@ -41,13 +42,16 @@ public struct MathView: View {
     ///   - labelMode: The label mode (display or text). Default is display.
     ///   - textAlignment: The horizontal text alignment. Default is left.
     ///   - contentInsets: The content insets. Default is nil (zero insets).
+    ///   - lineLimit: The maximum number of lines to display. Set to 0 for unlimited (default).
+    ///                When content exceeds this limit, the last line will be truncated with an ellipsis (…).
     public init(
         latex: String,
         fontSize: CGFloat = 20,
-        textColor: MTColor = MTColor.black,
+        textColor: Color = .black,
         labelMode: MTMathUILabelMode = .display,
         textAlignment: MTTextAlignment = .left,
-        contentInsets: MTEdgeInsets? = nil
+        contentInsets: MTEdgeInsets? = nil,
+        lineLimit: Int = 0
     ) {
         self.latex = latex
         self.fontSize = fontSize
@@ -59,6 +63,7 @@ public struct MathView: View {
         #else
         self.contentInsets = contentInsets ?? UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         #endif
+        self.lineLimit = max(0, lineLimit)
     }
 
     public var body: some View {
@@ -68,19 +73,29 @@ public struct MathView: View {
             textColor: textColor,
             labelMode: labelMode,
             textAlignment: textAlignment,
-            contentInsets: contentInsets
+            contentInsets: contentInsets,
+            lineLimit: lineLimit
         )
     }
 }
 
-@available(iOS 13.0, macOS 10.15, *)
+@available(iOS 14.0, macOS 11.0, *)
 private struct MathViewRepresentable: MTViewRepresentable {
     let latex: String
     let fontSize: CGFloat
-    let textColor: MTColor
+    let textColor: Color
     let labelMode: MTMathUILabelMode
     let textAlignment: MTTextAlignment
     let contentInsets: MTEdgeInsets
+    let lineLimit: Int
+    
+    private var mtColor: MTColor {
+        #if os(macOS)
+        return NSColor(textColor)
+        #else
+        return UIColor(textColor)
+        #endif
+    }
 
     #if os(macOS)
     typealias NSViewType = MTMathUILabel
@@ -93,6 +108,7 @@ private struct MathViewRepresentable: MTViewRepresentable {
 
     func updateNSView(_ nsView: MTMathUILabel, context: Context) {
         updateLabel(nsView)
+        nsView.needsLayout = true
     }
 
     @available(macOS 13.0, *)
@@ -103,7 +119,8 @@ private struct MathViewRepresentable: MTViewRepresentable {
             let size = nsView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
             return size
         }
-        return nil
+        // Return intrinsic size if no width constraint
+        return nsView.sizeThatFits(.zero)
     }
     #else
     typealias UIViewType = MTMathUILabel
@@ -116,6 +133,8 @@ private struct MathViewRepresentable: MTViewRepresentable {
 
     func updateUIView(_ uiView: MTMathUILabel, context: Context) {
         updateLabel(uiView)
+        uiView.setNeedsLayout()
+        uiView.layoutIfNeeded()
     }
 
     @available(iOS 16.0, *)
@@ -126,18 +145,21 @@ private struct MathViewRepresentable: MTViewRepresentable {
             let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
             return size
         }
-        return nil
+        // Return intrinsic size if no width constraint
+        return uiView.sizeThatFits(.zero)
     }
     #endif
 
     private func updateLabel(_ label: MTMathUILabel) {
         label.latex = latex
         label.fontSize = fontSize
-        label.textColor = textColor
+        label.textColor = mtColor
         label.labelMode = labelMode
         label.textAlignment = textAlignment
         label.contentInsets = contentInsets
+        label.lineLimit = lineLimit
         // Note: preferredMaxLayoutWidth is set in sizeThatFits based on SwiftUI's layout proposal
+        // But we need to keep it set for the layout phase
     }
 }
 
@@ -148,27 +170,35 @@ import AppKit
 private typealias MTViewRepresentable = NSViewRepresentable
 #else
 import UIKit
-@available(iOS 13.0, *)
+@available(iOS 14.0, *)
 private typealias MTViewRepresentable = UIViewRepresentable
 #endif
 
 // MARK: - Preview Provider
 
-@available(iOS 13.0, macOS 10.15, *)
+@available(iOS 14.0, macOS 11.0, *)
 struct MathView_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 20) {
             // Using modifiers
             MathView(latex: "x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}")
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             // Using constructor parameters
             MathView(
                 latex: "\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}",
                 fontSize: 20
             )
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Mixed approach
             MathView(latex: "E = mc^2", fontSize: 30)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            // Test with white color
+            MathView(latex: "E = mc^2", fontSize: 30, textColor: .white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.black)
         }
         .padding()
     }

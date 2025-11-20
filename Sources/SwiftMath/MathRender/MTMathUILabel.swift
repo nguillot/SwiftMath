@@ -192,6 +192,19 @@ public class MTMathUILabel : MTView {
     }
     private var _preferredMaxLayoutWidth: CGFloat = 0
 
+    /** The maximum number of lines to display.
+     Set to 0 for unlimited lines (default). When content exceeds this limit,
+     the last line will be truncated with an ellipsis (…). */
+    public var lineLimit: Int {
+        set {
+            _lineLimit = max(0, newValue) // Ensure non-negative
+            self.invalidateIntrinsicContentSize()
+            self.setNeedsLayout()
+        }
+        get { _lineLimit }
+    }
+    private var _lineLimit: Int = 0
+
     public var currentStyle:MTLineStyle {
         switch _labelMode {
             case .display: return .display
@@ -281,6 +294,12 @@ public class MTMathUILabel : MTView {
         // print("Pre list = \(_mathList!)")
         _displayList = MTTypesetter.createLineForMathList(_mathList, font: self.font, style: currentStyle, maxWidth: availableWidth)
         _displayList!.textColor = textColor
+        
+        // Apply line limit if specified
+        if _lineLimit > 0 {
+            _displayList = applyLineLimit(to: _displayList!, maxLines: _lineLimit, maxWidth: availableWidth)
+        }
+        
         // print("Post list = \(_mathList!)")
         var textX = CGFloat(0)
         switch self.textAlignment {
@@ -333,6 +352,11 @@ public class MTMathUILabel : MTView {
             // Failed to create display list
             return CGSize(width: -1, height: -1)
         }
+        
+        // Apply line limit if specified
+        if _lineLimit > 0 {
+            displayList = applyLineLimit(to: displayList!, maxLines: _lineLimit, maxWidth: maxWidth)
+        }
 
         var resultWidth = displayList!.width + contentInsets.left + contentInsets.right
         let resultHeight = displayList!.ascent + displayList!.descent + contentInsets.top + contentInsets.bottom
@@ -357,7 +381,7 @@ public class MTMathUILabel : MTView {
     }
     #endif
 
-#if os(macOS)
+    #if os(macOS)
     func setNeedsDisplay() { self.needsDisplay = true }
     func setNeedsLayout() { self.needsLayout = true }
     public override var fittingSize: CGSize { _sizeThatFits(CGSizeZero) }
@@ -371,5 +395,220 @@ public class MTMathUILabel : MTView {
     public override var intrinsicContentSize: CGSize { _sizeThatFits(CGSizeZero) }
     override public func layoutSubviews() { _layoutSubviews() }
 #endif
+    
+    // MARK: - Line Limit Support
+    
+    /// Applies line limit to the display list, truncating content beyond the specified number of lines
+    /// and adding an ellipsis to the last visible line.
+    /// - Parameters:
+    ///   - displayList: The display list to truncate
+    ///   - maxLines: The maximum number of lines to display
+    ///   - maxWidth: The maximum width available for each line
+    /// - Returns: A new display list with truncation applied
+    private func applyLineLimit(to displayList: MTMathListDisplay, maxLines: Int, maxWidth: CGFloat) -> MTMathListDisplay {
+        guard maxLines > 0 else { return displayList }
+        
+        // Safety check: if no width constraint or empty display list, return as-is
+        guard maxWidth > 0, !displayList.subDisplays.isEmpty else { return displayList }
+        
+        // Sort displays by Y position (descending, since Y goes negative downward)
+        // This groups displays that are visually on the same horizontal line
+        let sortedDisplays = displayList.subDisplays.sorted { $0.position.y > $1.position.y }
+        
+        // Group displays by visual lines based on Y position clusters
+        // Displays with similar Y positions are on the same visual line
+        var lineGroups: [(displays: [MTDisplay], baselineY: CGFloat, minY: CGFloat, maxY: CGFloat)] = []
+        let yTolerance: CGFloat = 10.0  // Y positions within this range are considered same line
+        
+        for display in sortedDisplays {
+            let displayY = display.position.y
+            
+            // Find which line group this display belongs to based on Y position
+            var foundLine = false
+            
+            for i in 0..<lineGroups.count {
+                if abs(displayY - lineGroups[i].baselineY) < yTolerance {
+                    // Similar Y position - add to this line
+                    lineGroups[i].displays.append(display)
+                    lineGroups[i].minY = min(lineGroups[i].minY, displayY)
+                    lineGroups[i].maxY = max(lineGroups[i].maxY, displayY)
+                    foundLine = true
+                    break
+                }
+            }
+            
+            if !foundLine {
+                // New line with this Y as baseline
+                lineGroups.append((displays: [display], baselineY: displayY, minY: displayY, maxY: displayY))
+            }
+        }
+        
+        // Sort each line's displays by X position for correct left-to-right order
+        for i in 0..<lineGroups.count {
+            lineGroups[i].displays.sort { $0.position.x < $1.position.x }
+        }
+        
+        // If we have fewer lines than the limit, no truncation needed
+        if lineGroups.count <= maxLines {
+            return displayList
+        }
+        
+        // Create ellipsis once
+        let ellipsis = createEllipsisDisplay()
+        let ellipsisWidth = measureDisplayWidth(ellipsis)
+        
+        // Determine which line will have the ellipsis (the last visible line)
+        let ellipsisLineIndex = maxLines - 1
+        
+        // Build result with truncation
+        var newDisplays: [MTDisplay] = []
+        
+        for lineIndex in 0..<maxLines {
+            let line = lineGroups[lineIndex]
+            let isEllipsisLine = (lineIndex == ellipsisLineIndex)
+            
+            if !isEllipsisLine {
+                // Lines before the ellipsis line: add completely
+                newDisplays.append(contentsOf: line.displays)
+            } else {
+                // This is the line that gets truncated with ellipsis
+                let lineYPos = line.minY
+                var accumulatedWidth: CGFloat = 0
+                var lineDisplays: [MTDisplay] = []
+                
+                for (_, display) in line.displays.enumerated() {
+                    // For CTLineDisplay (text), we may need to truncate it to fit
+                    if let lineDisplay = display as? MTCTLineDisplay,
+                       let attrString = lineDisplay.attributedString {
+                        let displayWidth = measureDisplayWidth(display)
+                        let displayStartX = display.position.x
+                        let displayEndX = displayStartX + displayWidth
+                        let requiredWidth = displayEndX + ellipsisWidth
+                        
+                        if requiredWidth <= maxWidth {
+                            // Fits completely
+                            lineDisplays.append(display)
+                            accumulatedWidth = displayEndX
+                        } else if displayStartX + ellipsisWidth <= maxWidth {
+                            // Need to truncate this text display to fit ellipsis
+                            let availableWidthForText = maxWidth - displayStartX - ellipsisWidth
+                            
+                            // Binary search to find how many characters fit in the available width
+                            var low = 0
+                            var high = attrString.length
+                            var bestFitLength = 0
+                            
+                            while low <= high {
+                                let mid = (low + high) / 2
+                                let testString = attrString.attributedSubstring(from: NSRange(location: 0, length: mid))
+                                let testLine = CTLineCreateWithAttributedString(testString)
+                                let testWidth = CGFloat(CTLineGetTypographicBounds(testLine, nil, nil, nil))
+                                
+                                if testWidth <= availableWidthForText {
+                                    bestFitLength = mid
+                                    low = mid + 1
+                                } else {
+                                    high = mid - 1
+                                }
+                            }
+                            
+                            if bestFitLength > 0 {
+                                // Create truncated attributed string with only the characters that fit
+                                let truncatedAttrString = attrString.attributedSubstring(from: NSRange(location: 0, length: bestFitLength))
+                                let truncatedLine = CTLineCreateWithAttributedString(truncatedAttrString)
+                                let truncatedWidth = CGFloat(CTLineGetTypographicBounds(truncatedLine, nil, nil, nil))
+                                
+                                let truncatedDisplay = MTCTLineDisplay(
+                                    withString: truncatedAttrString as! NSMutableAttributedString,
+                                    position: display.position,
+                                    range: NSRange(location: lineDisplay.range.location, length: bestFitLength),
+                                    font: self.font,
+                                    atoms: lineDisplay.atoms
+                                )
+                                truncatedDisplay.textColor = lineDisplay.textColor
+                                lineDisplays.append(truncatedDisplay)
+                                accumulatedWidth = displayStartX + truncatedWidth
+                            } else {
+                                break
+                            }
+                        } else {
+                            break
+                        }
+                    } else {
+                        // Non-text display (fraction, radical, etc.)
+                        let displayWidth = measureDisplayWidth(display)
+                        let displayStartX = display.position.x
+                        let displayEndX = displayStartX + displayWidth
+                        let requiredWidth = displayEndX + ellipsisWidth
+                        
+                        if requiredWidth <= maxWidth {
+                            lineDisplays.append(display)
+                            accumulatedWidth = displayEndX
+                        } else {
+                            break
+                        }
+                    }
+                }
+                
+                newDisplays.append(contentsOf: lineDisplays)
+                
+                // Position ellipsis at the end of accumulated displays
+                ellipsis.position = CGPoint(x: accumulatedWidth, y: lineYPos)
+                ellipsis.textColor = textColor
+                newDisplays.append(ellipsis)
+            }
+        }
+        
+        // Create new display list with truncated content
+        let truncatedDisplay = MTMathListDisplay(withDisplays: newDisplays, range: displayList.range)
+        truncatedDisplay.textColor = displayList.textColor
+        
+        return truncatedDisplay
+    }
+    
+    /// Measures the actual width of a display using CTLineGetTypographicBounds
+    private func measureDisplayWidth(_ display: MTDisplay) -> CGFloat {
+        // For CTLineDisplay, use CTLineGetTypographicBounds for accurate measurement
+        if let lineDisplay = display as? MTCTLineDisplay,
+           let attrString = lineDisplay.attributedString {
+            let ctLine = CTLineCreateWithAttributedString(attrString)
+            return CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+        }
+        // For other displays, use the width property
+        return display.width
+    }
+    
+    /// Creates a display for the ellipsis character
+    private func createEllipsisDisplay() -> MTCTLineDisplay {
+        let ellipsisString = NSMutableAttributedString(string: "\u{2026}") // Unicode ellipsis
+        
+        // Use the current font for the ellipsis
+        let currentFont = self.font ?? MTFontManager.fontManager.defaultFont
+        
+        guard let fontToUse = currentFont else {
+            // Last resort: create a minimal display if even default font is nil
+            // This shouldn't happen in practice
+            let emptyDisplay = MTCTLineDisplay(
+                withString: NSMutableAttributedString(string: ""),
+                position: CGPoint.zero,
+                range: NSMakeRange(NSNotFound, 0),
+                font: nil,
+                atoms: []
+            )
+            return emptyDisplay
+        }
+        
+        ellipsisString.addAttribute(.font, value: fontToUse.ctFont as Any, range: NSMakeRange(0, 1))
+        
+        let ellipsisDisplay = MTCTLineDisplay(
+            withString: ellipsisString,
+            position: CGPoint.zero,
+            range: NSMakeRange(NSNotFound, 0),
+            font: fontToUse,
+            atoms: []
+        )
+        
+        return ellipsisDisplay
+    }
     
 }

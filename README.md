@@ -116,6 +116,7 @@ struct ContentView: View {
 
 The `MathView` automatically handles platform differences and supports:
 - Multi-line layout with automatic line wrapping
+- Line limit with ellipsis truncation
 - Customizable font size, text color, and alignment
 - Both display and text modes
 - Content insets for fine-tuned positioning
@@ -250,6 +251,84 @@ You can also use `sizeThatFits` to calculate the size with a width constraint:
 
 ```swift
 let constrainedSize = label.sizeThatFits(CGSize(width: 235, height: .greatestFiniteMagnitude))
+```
+
+### Line Limit (Truncation with Ellipsis)
+
+`SwiftMath` supports limiting the number of displayed lines with automatic truncation. When content exceeds the line limit, the last visible line will be truncated and an ellipsis (…) will be displayed at the end.
+
+**Key Features:**
+- text truncation using binary search to maximize visible characters
+- Ellipsis always fits within the width constraint by truncating content as needed
+- Proper grouping of mathematical elements (superscripts, subscripts) with their base text
+- Y-position-based line detection that correctly handles vertically-displaced elements
+
+#### Using Line Limit with UIKit/AppKit
+
+Set the `lineLimit` property on `MTMathUILabel`:
+
+```swift
+let label = MTMathUILabel()
+label.latex = "a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t+u+v+w+x+y+z"
+label.font = MTFontManager.fontManager.defaultFont
+label.preferredMaxLayoutWidth = 100  // Enable line wrapping
+label.lineLimit = 2  // Limit to 2 lines
+
+// Content will wrap and truncate after 2 lines, showing "…" at the end
+```
+
+**Line Limit Values:**
+- `0` (default): Unlimited lines - all content is displayed
+- `1, 2, 3, ...`: Maximum number of lines to display
+
+#### Using Line Limit with SwiftUI
+
+The built-in `MathView` supports the `lineLimit` parameter:
+
+```swift
+VStack(alignment: .leading, spacing: 8) {
+    MathView(
+        latex: "a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t+u+v+w+x+y+z",
+        fontSize: 17,
+        lineLimit: 2  // Limit to 2 lines with ellipsis
+    )
+}
+.frame(maxWidth: 200)
+```
+
+**Example with text:**
+
+```swift
+MathView(
+    latex: "\\text{This is a very long piece of text that will wrap across multiple lines but will be truncated after the specified line limit.}",
+    fontSize: 17,
+    labelMode: .text,
+    lineLimit: 3  // Show only first 3 lines
+)
+.frame(maxWidth: 250)
+```
+
+#### Combining Line Wrapping and Line Limit
+
+Line limit works together with line wrapping:
+1. Content first wraps according to `preferredMaxLayoutWidth` (or SwiftUI's width constraint)
+2. If the wrapped content exceeds `lineLimit`, it truncates at the specified line
+3. An ellipsis (…) is automatically added to the end of the last visible line
+
+```swift
+// UIKit/AppKit Example
+let label = MTMathUILabel()
+label.latex = "\\text{A very long equation: } x + y + z + a + b + c + d + e + f"
+label.preferredMaxLayoutWidth = 150  // Wrap at 150pt width
+label.lineLimit = 1  // Show only first line with ellipsis
+
+// SwiftUI Example  
+MathView(
+    latex: "\\text{A very long equation: } x + y + z + a + b + c + d + e + f",
+    fontSize: 20,
+    lineLimit: 1
+)
+.frame(maxWidth: 150)
 ```
 
 #### Using Line Wrapping with SwiftUI
