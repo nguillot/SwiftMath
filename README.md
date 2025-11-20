@@ -86,7 +86,43 @@ XCode's package manager.
 
 ## Usage
 
-The library provides a class `MTMathUILabel` which is a `UIView` that
+### Using the built-in SwiftUI MathView
+
+`SwiftMath` now includes a native `MathView` SwiftUI component that works seamlessly on both iOS and macOS. This is the recommended approach for SwiftUI applications:
+
+```swift
+import SwiftUI
+import SwiftMath
+
+struct ContentView: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            // Simple usage
+            MathView(latex: "x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}")
+            
+            // With custom parameters
+            MathView(
+                latex: "\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}",
+                fontSize: 25,
+                textColor: .blue,
+                labelMode: .display,
+                textAlignment: .center
+            )
+        }
+        .padding()
+    }
+}
+```
+
+The `MathView` automatically handles platform differences and supports:
+- Multi-line layout with automatic line wrapping
+- Customizable font size, text color, and alignment
+- Both display and text modes
+- Content insets for fine-tuned positioning
+
+### Using MTMathUILabel (UIKit/AppKit)
+
+For UIKit or AppKit applications, the library provides a class `MTMathUILabel` which is a `UIView` that
 supports rendering math equations. To display an equation simply create
 an `MTMathUILabel` as follows:
 
@@ -101,7 +137,9 @@ label.latex = "x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}"
 Adding `MTMathUILabel` as a sub-view of your `UIView` will render the
 quadratic formula example shown above.
 
-The following code creates a SwiftUI component called `MathView` encapsulating the MTMathUILabel:
+### Creating a Custom SwiftUI Wrapper (Advanced)
+
+If you need more control or want to customize the SwiftUI integration beyond what the built-in `MathView` provides, you can create your own wrapper around `MTMathUILabel`. The following code shows an example for iOS:
 
 ```swift
 import SwiftUI
@@ -146,7 +184,7 @@ struct MathView: UIViewRepresentable {
 }
 ```
 
-For code that works with SwiftUI running natively under MacOS use the following:
+And for macOS:
 
 ```swift
 import SwiftUI
@@ -216,7 +254,20 @@ let constrainedSize = label.sizeThatFits(CGSize(width: 235, height: .greatestFin
 
 #### Using Line Wrapping with SwiftUI
 
-The `MathView` examples above include `sizeThatFits()` which automatically enables line wrapping when SwiftUI proposes a width constraint. No additional configuration is needed:
+The built-in `MathView` automatically supports line wrapping when SwiftUI proposes a width constraint. Simply constrain the view's width:
+
+```swift
+VStack(alignment: .leading, spacing: 8) {
+    MathView(
+        latex: "\\text{Calculer le discriminant }\\Delta=b^{2}-4ac\\text{ avec }a=1\\text{, }b=-1\\text{, }c=-5",
+        fontSize: 17,
+        labelMode: .text
+    )
+}
+.frame(maxWidth: 235)  // The equation will automatically break across multiple lines
+```
+
+If you're using a custom SwiftUI wrapper, the `MathView` examples in the "Creating a Custom SwiftUI Wrapper" section include `sizeThatFits()` which enables line wrapping when SwiftUI proposes a width constraint:
 
 ```swift
 VStack(alignment: .leading, spacing: 8) {
