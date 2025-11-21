@@ -6,11 +6,119 @@
 //  MIT license. See the LICENSE file for details.
 //
 
+// MARK: - TeX Algorithm Implementation Reference
+
+/// This file implements mathematical typesetting based on The TeXbook, Appendix G:
+/// "Generating Boxes from Formulas" by Donald E. Knuth.
+///
+/// ## TeX Rule Implementation Mapping
+///
+/// **Preprocessing (Appendix G, Rules 1-6):**
+/// - Rule 5 (Binary → Ordinary): ✅ Implemented in `MTMathList.finalize()`
+/// - Rule 6 (Remove empty boundaries): ✅ Implemented in `MTMathList.finalize()`
+/// - Rule 14 (Merge adjacent ordinary): ✅ Implemented in `preprocessMathList()` (line ~468)
+///
+/// **Spacing (Appendix G, Rule 16):**
+/// - Inter-element spacing table: ✅ Implemented in `getInterElementSpaces()` (line ~26)
+/// - Spacing calculation: ✅ Implemented in `addInterElementSpace()` (line ~496)
+/// - Thin space (3mu): ✅ `.thin`
+/// - Medium space (4mu): ✅ `.nsMedium`
+/// - Thick space (5mu): ✅ `.nsThick`
+/// - Note: "ns" prefix = "not in script mode" (suppressed in cramped/script styles)
+///
+/// **Fractions (Appendix G, Rule 15):**
+/// - Generalized fractions: ✅ Implemented in `makeFraction()` (line ~1877)
+/// - Numerator/denominator styling: ✅ Adaptive style selection
+/// - Fraction bar positioning: ✅ Axis-aligned with configurable gaps
+/// - Continued fractions: ✅ Special handling (always display style)
+///
+/// **Scripts (Appendix G, Rule 17):**
+/// - Superscript positioning: ✅ Implemented in `MTScriptRenderer`
+/// - Subscript positioning: ✅ Implemented in `MTScriptRenderer`
+/// - Cramped styles: ✅ Controlled by `cramped` flag
+/// - Script size reduction: ✅ Via `scriptStyle()`, `scriptOfScriptStyle()`
+///
+/// **Radicals (Appendix G, Rule 11):**
+/// - Radical construction: ✅ Implemented in `makeRadical()` (line ~2029)
+/// - Vertical gap calculation: ✅ `radicalVerticalGap()` (line ~1997)
+/// - Glyph assembly: ✅ `getRadicalGlyphWithHeight()` (line ~2011)
+/// - Rule thickness: ✅ Uses math table parameters
+///
+/// **Large Operators (Appendix G, Rule 13):**
+/// - Display style enlargement: ✅ Implemented in `makeLargeOp()` (line ~2234)
+/// - Limits positioning: ✅ `addLimitsToDisplay()` (line ~2277)
+/// - Vertical centering: ✅ Axis-aligned using `axisHeight`
+/// - Italic correction: ✅ Applied to superscripts
+///
+/// **Accents (Appendix G, Rule 12):**
+/// - Accent positioning: ✅ Implemented in `makeAccent()` (line ~2535)
+/// - Horizontal skew: ✅ `getSkew()` (line ~2469)
+/// - Width-based variant selection: ✅ `findVariantGlyph()` (line ~2490)
+/// - Base height consideration: ✅ Uses `accentBaseHeight`
+///
+/// **Delimiters (Appendix G, Rules 19-20):**
+/// - Variable-size delimiters: ✅ `findGlyphForBoundary()` (line ~2390)
+/// - Height-based selection: ✅ `findGlyph()` (line ~2076)
+/// - Extensible construction: ✅ `constructGlyph()` (line ~2113)
+/// - Delimiter factor (901): ✅ `kDelimiterFactor` (line ~2336)
+/// - Delimiter shortfall (5pt): ✅ `kDelimiterShortfallPoints` (line ~2337)
+///
+/// **Line Breaking (TeX \discretionary):**
+/// - Break point detection: ✅ `checkAndPerformInteratomLineBreak()` (line ~541)
+/// - Penalty calculation: ✅ `calculateBreakPenalty()` (line ~666)
+/// - Width estimation: ✅ `estimateRemainingAtomsWidth()` (line ~674)
+/// - Look-ahead optimization: ✅ Up to 5 atoms ahead
+///
+/// **Tables/Matrices (TeX \halign):**
+/// - Multi-row layout: ✅ `makeTable()` (line ~2600)
+/// - Column alignment: ✅ Left, center, right support
+/// - Row positioning: ✅ `positionRows()` (line ~2680)
+/// - Baseline skip: ✅ Configurable inter-row spacing
+///
+/// **Deviations from TeX:**
+/// 1. **Radical spacing** (line ~70): Adds space after \sqrt in non-row contexts
+///    - TeX: Treats radical as ordinary (no right spacing)
+///    - SwiftMath: Adds 8mu spacing for better visuals (e.g., "√4 4" → "√4 4")
+///
+/// 2. **Line breaking**: Not part of original TeX math mode
+///    - SwiftMath: Custom algorithm for multi-line equations
+///    - Uses penalty scores to avoid breaking at poor locations
+///
+/// 3. **Unicode normalization** (line ~1131): Modern Unicode composition
+///    - TeX: Uses font-based accent positioning only
+///    - SwiftMath: Attempts Unicode NFC composition first, falls back to positioning
+///
+/// ## References
+/// - The TeXbook (Knuth, 1984), Appendix G
+/// - TeX Math Layout: https://www.tug.org/TUGboat/tb30-1/tb94vieth.pdf
+/// - OpenType Math Table: https://docs.microsoft.com/typography/opentype/spec/math
+
 import Foundation
 import CoreText
 
 // MARK: - Inter Element Spacing
 
+/// Inter-element spacing types based on TeX Appendix G, Rule 16.
+///
+/// TeX defines spacing in "mu" (math units), where 18mu = 1em.
+/// This implementation uses the following mapping:
+/// - `.none`: 0mu (no space)
+/// - `.thin`: 3mu (\,)
+/// - `.nsThin`: 3mu, suppressed in script mode
+/// - `.nsMedium`: 4mu (\:), suppressed in script mode  
+/// - `.nsThick`: 5mu (\;), suppressed in script mode
+///
+/// The "ns" prefix means "not in script mode" - these spaces are
+/// omitted when `spaced = false` (cramped or script styles).
+///
+/// ## TeX Spacing Rules (Appendix G, Table 18.2)
+/// Spacing depends on the types of adjacent atoms:
+/// - Ord Op: thin space
+/// - Ord Bin: medium space (in display/text mode)
+/// - Bin Rel: invalid (Rule 5 converts Bin → Ord)
+/// - Rel Rel: no space (e.g., "< =" becomes "<=")
+/// - Open anything: no space
+/// - Punct anything: thin space
 enum InterElementSpaceType : Int {
     case invalid = -1
     case none = 0
@@ -23,6 +131,26 @@ enum InterElementSpaceType : Int {
 var interElementSpaceArray = [[InterElementSpaceType]]()
 private let interElementLock = NSLock()
 
+/// Returns the inter-element spacing table from TeX Appendix G, Rule 16.
+///
+/// This table defines spacing between adjacent math atoms based on their types.
+/// Based on The TeXbook, Appendix G, page 170, Table 18.2.
+///
+/// ## Table Structure
+/// - Rows: Left atom type (first atom)
+/// - Columns: Right atom type (second atom)
+/// - Values: Space type to insert between atoms
+///
+/// ## TeX Rule 16: Spacing
+/// "If the math list to be typeset has length ≥ 2, we examine pairs of adjacent items
+/// (x, y) and insert glue between them based on their types."
+///
+/// ## Deviations from TeX
+/// - **Radical (row 8):** Added spacing after radicals (TeX treats as Ord)
+///   - Reason: Visual clarity (e.g., "√4 4" needs space)
+/// - **Fraction (col 7):** Custom spacing for continued fractions
+///
+/// - Returns: 9×8 spacing table where `table[leftType][rightType]` gives the space
 func getInterElementSpaces() -> [[InterElementSpaceType]] {
     if interElementSpaceArray.isEmpty {
         
@@ -30,6 +158,8 @@ func getInterElementSpaces() -> [[InterElementSpaceType]] {
         defer { interElementLock.unlock() }
         guard interElementSpaceArray.isEmpty else { return interElementSpaceArray }
         
+        // TeX Appendix G, Table 18.2: Inter-atom spacing
+        // Reference: The TeXbook, page 170
         interElementSpaceArray =
         //   ordinary   operator   binary     relation  open       close     punct     fraction
         [  [.none,     .thin,     .nsMedium, .nsThick, .none,     .none,    .none,    .nsThin],    // ordinary
@@ -437,11 +567,34 @@ class MTTypesetter {
         self.minimumLineSpacing = (font?.fontSize ?? 0) * 0.2
     }
     
+    /// Preprocesses the math list according to TeX Appendix G preprocessing rules.
+    ///
+    /// ## TeX Rule Implementation
+    ///
+    /// **Rule 5 (Binary → Ordinary):** ✅ Handled in `MTMathList.finalize()`
+    /// - Converts binary operators to ordinary at start/end of lists
+    /// - Example: "+ x" → ordinary +, "x -" → ordinary -
+    ///
+    /// **Rule 6 (Boundary removal):** ✅ Handled in `MTMathList.finalize()`
+    /// - Removes empty left/right boundaries
+    /// - Simplifies inner lists before typesetting
+    ///
+    /// **Rule 14 (Merge ordinary characters):** ✅ Implemented here (lines 468-478)
+    /// - Combines adjacent ordinary atoms into single atoms
+    /// - Prevents unnecessary spacing between letters in identifiers
+    /// - Example: "a", "b", "c" → "abc" (single atom)
+    /// - Only merges if no sub/superscripts (to preserve positioning)
+    ///
+    /// **Non-TeX Extensions:**
+    /// - Converts `.variable` and `.number` types to `.ordinary` with italic font
+    /// - Converts `.unaryOperator` to `.ordinary` (TeX handles during parsing)
+    ///
+    /// - Parameter ml: The math list to preprocess
+    /// - Returns: Array of preprocessed atoms ready for typesetting
+    ///
+    /// - Note: This is step 1 of the typesetting pipeline. After this,
+    ///   `createDisplayAtoms()` applies Rules 15-20 (fractions, radicals, etc.)
     static func preprocessMathList(_ ml:MTMathList?) -> [MTMathAtom] {
-        // Note: Some of the preprocessing described by the TeX algorithm is done in the finalize method of MTMathList.
-        // Specifically rules 5 & 6 in Appendix G are handled by finalize.
-        // This function does not do a complete preprocessing as specified by TeX either. It removes any special atom types
-        // that are not included in TeX and applies Rule 14 to merge ordinary characters.
         
         // Guard against nil input
         guard let mathList = ml, !mathList.atoms.isEmpty else {
@@ -548,6 +701,46 @@ class MTTypesetter {
         return CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
     }
 
+    /// Determines optimal line break point for mathematical typesetting.
+    ///
+    /// ## Line Breaking Algorithm (Non-TeX Extension)
+    /// This implements a modified Knuth-Plass line breaking algorithm specifically
+    /// adapted for mathematical formulas. TeX's original math mode doesn't support
+    /// automatic line breaking - this is a SwiftMath extension.
+    ///
+    /// ### Algorithm Overview:
+    /// 1. **Width calculation**: Check if adding atom exceeds `maxWidth`
+    /// 2. **Look-ahead**: Examine next 3-5 atoms to find better break points
+    /// 3. **Penalty scoring**: Assign penalties to different break locations
+    /// 4. **Break decision**: Execute break if penalty is acceptable
+    ///
+    /// ### Penalty Scores (lower = better):
+    /// - **0**: After operators, relations, punctuation (ideal break points)
+    /// - **10**: After ordinary atoms (acceptable)
+    /// - **50**: After fractions (moderately bad)
+    /// - **100**: After open brackets, before close brackets (bad)
+    /// - **150**: After unary/large operators (very bad)
+    /// - **200**: Mid-expression with no good alternatives (worst)
+    ///
+    /// ### Break Conditions:
+    /// - **Usage < 60%**: Continue without breaking (room available)
+    /// - **Usage 60-120%**: Use penalty scoring for optimal break
+    /// - **Usage > 120%**: Break immediately (severe overflow)
+    ///
+    /// ### Word Boundary Protection:
+    /// Never breaks between consecutive ordinary atoms (e.g., "abc" stays together)
+    ///
+    /// ### Examples:
+    /// - Good break: `a + b |newline c + d` (after operator)
+    /// - Bad break: `(a + |newline b)` (after open paren)
+    /// - Avoided: `ab|newline c` (mid-word)
+    ///
+    /// - Parameters:
+    ///   - atom: Current atom being processed
+    ///   - prevNode: Previous atom (for spacing context)
+    ///   - nextAtoms: Upcoming atoms for look-ahead (max 5)
+    /// - Returns: `true` if a line break was performed
+    ///
     /// Check if we should break to a new line before adding this atom
     /// Uses look-ahead to find better break points aesthetically
     /// Returns true if a line break was performed
@@ -1998,6 +2191,19 @@ class MTTypesetter {
     
     // MARK: - Radicals
     
+    /// Returns vertical gap above radicand according to TeX Appendix G, Rule 11.
+    ///
+    /// ## TeX Rule 11: Radical Construction
+    /// "The radical sign √ is constructed to cover its contents with appropriate
+    /// vertical clearance above and rule thickness."
+    ///
+    /// ### TeX Parameters:
+    /// - Display style: Uses `radicalDisplayStyleVerticalGap` (larger gap)
+    /// - Other styles: Uses `radicalVerticalGap` (smaller gap)
+    ///
+    /// This ensures proper spacing between radical symbol and content.
+    ///
+    /// - Returns: Vertical gap in points
     func radicalVerticalGap() -> CGFloat {
         guard let mathTable = styleFont.mathTable else { return 0 }
         
@@ -2008,6 +2214,21 @@ class MTTypesetter {
         }
     }
     
+    /// Constructs a radical glyph of specified height using TeX Rule 11.
+    ///
+    /// ## TeX Rule 11 (continued): Glyph Selection
+    /// 1. **Find base glyph**: Start with U+221A (SQUARE ROOT)
+    /// 2. **Check variants**: Try progressively larger pre-composed glyphs
+    /// 3. **Construct if needed**: If no single glyph is large enough,
+    ///    assemble from extender pieces
+    ///
+    /// ### Glyph Assembly:
+    /// - Uses OpenType MATH GlyphAssembly table
+    /// - Combines: top piece + extenders + bottom piece
+    /// - Adjusts connector overlaps for seamless appearance
+    ///
+    /// - Parameter radicalHeight: Target height in points
+    /// - Returns: Glyph display of appropriate size or nil
     func getRadicalGlyphWithHeight(_ radicalHeight:CGFloat) -> MTDisplayDS? {
         var glyphAscent=CGFloat(0), glyphDescent=CGFloat(0), glyphWidth=CGFloat(0)
         
@@ -2231,6 +2452,33 @@ class MTTypesetter {
     
     // MARK: - Large Operators
     
+    /// Creates display for large operator according to TeX Appendix G, Rule 13.
+    ///
+    /// ## TeX Rule 13: Large Operators
+    /// "Large operators (like ∑, ∏, ∫) are treated specially:"
+    ///
+    /// ### TeX Algorithm:
+    /// 1. **Display style**: Use enlarged glyph variant
+    /// 2. **Other styles**: Use normal size
+    /// 3. **Vertical centering**: Position relative to axis height
+    /// 4. **Limits handling**:
+    ///    - Display/text mode: Limits go above/below (if `limits = true`)
+    ///    - Script mode: Limits go as superscript/subscript
+    /// 5. **Italic correction**: Apply to superscript positioning
+    ///
+    /// ### OpenType Math Parameters Used:
+    /// - `getLargerGlyph()`: Finds display-size variant
+    /// - `getItalicCorrection()`: Adjusts superscript position
+    /// - `axisHeight`: Centers operator vertically
+    /// - `upperLimitGapMin`, `lowerLimitGapMin`: Spacing for limits
+    ///
+    /// ### Examples:
+    /// - "∑": Sum with limits above/below in display mode
+    /// - "∫": Integral (limits=false, so uses scripts)
+    /// - "∏": Product with limits
+    ///
+    /// - Parameter op: The large operator atom
+    /// - Returns: Operator display with optional limits/scripts
     func makeLargeOp(_ op:MTLargeOperator!) -> MTDisplay?  {
         // Show limits above/below in both display and text (inline) modes
         // Only show limits to the side in script modes to keep them compact
@@ -2332,10 +2580,51 @@ class MTTypesetter {
     
     // MARK: - Large delimiters
     
+    /// TeX Appendix G, Rules 19-20: Variable-size delimiters.
+    ///
+    /// ## TeX Rules for Delimiters:
+    ///
+    /// **Rule 19 (Delimiter selection):**
+    /// "Choose delimiter size to cover at least a certain fraction of the formula."
+    /// - Formula: `height ≥ max(f × δ/500, 2δ - σ)` where:
+    ///   - `f` = delimiter factor (901 in plain.tex)
+    ///   - `δ` = maximum distance from axis
+    ///   - `σ` = delimiter shortfall (5pt in plain.tex)
+    ///
+    /// **Rule 20 (Glyph construction):**
+    /// "If no single glyph is large enough, construct from pieces."
+    /// - Use GlyphAssembly table from OpenType MATH
+    /// - Stack extender pieces to reach target height
+    ///
+    /// ### Implementation Constants:
+    /// - `kDelimiterFactor = 901`: Requires delimiter to cover 90.1% of content
+    /// - `kDelimiterShortfallPoints = 5`: Allow up to 5pt shortfall
+    ///
+    /// These match plain.tex values for TeX compatibility.
+    
     // Delimiter shortfall from plain.tex
     static let kDelimiterFactor = CGFloat(901)
     static let kDelimiterShortfallPoints = CGFloat(5)
     
+    /// Creates display for left/right delimiters (e.g., parentheses, brackets).
+    ///
+    /// Implements TeX Rules 19-20 for variable-size delimiter selection.
+    ///
+    /// ## Algorithm:
+    /// 1. **Calculate content height**: `δ = max(ascent - axis, descent + axis)`
+    /// 2. **Determine target size**: Using delimiter factor and shortfall
+    /// 3. **Find/construct glyphs**: Left and right delimiters
+    /// 4. **Position elements**: Delimiters around content
+    ///
+    /// ### Examples:
+    /// - `\left( \frac{a}{b} \right)`: Large parentheses around fraction
+    /// - `\left\{ x \right.`: Left brace only (right is empty)
+    /// - `\left[ \sum \right]`: Brackets around large operator
+    ///
+    /// - Parameters:
+    ///   - inner: The MTInner atom containing content and boundary specs
+    ///   - maxWidth: Maximum width for line breaking (0 = no limit)
+    /// - Returns: Display with delimiters positioned around content
     func makeLeftRight(_ inner: MTInner?, maxWidth: CGFloat = 0) -> MTDisplay? {
         guard let inner = inner,
               let innerListDisplay = MTTypesetter.createLineForMathList(inner.innerList, font:font, style:style, cramped:cramped, spaced:true, maxWidth:maxWidth),
@@ -2448,6 +2737,16 @@ class MTTypesetter {
     
     // MARK: - Accents
     
+    /// Checks if the accentee is a single character (for special handling).
+    ///
+    /// ## TeX Rule 12: Accents
+    /// Single-character accentees get special positioning using the character's
+    /// top accent attachment point from the math table.
+    ///
+    /// Multi-character accentees use geometric centering instead.
+    ///
+    /// - Parameter accent: The accent atom to check
+    /// - Returns: true if accentee is a single character without scripts
     func isSingleCharAccentee(_ accent:MTAccent?) -> Bool {
         guard let accent = accent, let innerList = accent.innerList else { return false }
         if innerList.atoms.count != 1 {
@@ -2533,6 +2832,38 @@ class MTTypesetter {
         return curGlyph;
     }
     
+    /// Creates accent display according to TeX Appendix G, Rule 12.
+    ///
+    /// ## TeX Rule 12: Accent Construction
+    /// "Accents are positioned above their base using the following algorithm:"
+    ///
+    /// ### TeX Algorithm:
+    /// 1. **Set accentee**: Typeset base in cramped style
+    /// 2. **Select accent glyph**: Find variant that fits accentee width
+    /// 3. **Calculate horizontal position**:
+    ///    - Single char: Use `topAccentAttachment` from math table (skew)
+    ///    - Multiple chars: Center geometrically
+    /// 4. **Calculate vertical position**:
+    ///    - Base: `min(accentee.ascent, accentBaseHeight)`
+    ///    - Height: `accentee.ascent - base`
+    ///
+    /// ### OpenType Math Parameters:
+    /// - `topAccentAttachment`: Horizontal position on base character
+    /// - `accentBaseHeight`: Typical height for positioning
+    /// - Horizontal variants: Width-appropriate accent glyphs
+    ///
+    /// ### Special Cases:
+    /// 1. **Empty accent**: Returns accentee unchanged
+    /// 2. **Single char with scripts**: Attaches scripts to base (not accent)
+    ///    - Example: â² → base=(a with scripts), accent=hat
+    ///
+    /// ### Examples:
+    /// - \hat{x}: x̂
+    /// - \tilde{abc}: ãbc (centered)
+    /// - \vec{v}^2: v⃗² (superscript on base)
+    ///
+    /// - Parameter accent: The accent atom to render
+    /// - Returns: Accent display or nil on error
     func makeAccent(_ accent:MTAccent?) -> MTDisplay? {
         // Guard against nil accent or nil innerList
         guard let accent = accent, let innerList = accent.innerList else {
@@ -2592,11 +2923,53 @@ class MTTypesetter {
     
     // MARK: - Table
     
+    /// TeX table layout parameters (not directly from Appendix G).
+    ///
+    /// ## TeX \halign Implementation
+    /// Tables/matrices use TeX's \halign primitive for alignment.
+    /// This implementation adapts those concepts to modern typography.
+    ///
+    /// ### Spacing Parameters:
+    /// - `kBaseLineSkipMultiplier = 1.2`: Default baseline-to-baseline (12pt for 10pt font)
+    /// - `kLineSkipMultiplier = 0.1`: Additional space between rows (1pt for 10pt)
+    /// - `kLineSkipLimitMultiplier = 0`: Minimum row separation
+    /// - `kJotMultiplier = 0.3`: Small vertical unit (3pt for 10pt font, "jot" in TeX)
+    ///
+    /// ### Row Positioning Algorithm:
+    /// 1. Position first row at y=0
+    /// 2. For each subsequent row:
+    ///    - Default skip: `baselineSkip`
+    ///    - If rows too close: Use `lineSkip` instead
+    ///    - Apply `openup` (jot-based additional spacing)
+    /// 3. Center entire table vertically around axis
+    ///
+    /// ### Column Alignment:
+    /// - `.left`: Align to left edge (default)
+    /// - `.center`: Center in column
+    /// - `.right`: Align to right edge
+    ///
+    /// Similar to LaTeX's `{lcr}` column specifications.
+    
     let kBaseLineSkipMultiplier = CGFloat(1.2)  // default base line stretch is 12 pt for 10pt font.
     let kLineSkipMultiplier = CGFloat(0.1)  // default is 1pt for 10pt font.
     let kLineSkipLimitMultiplier = CGFloat(0)
     let kJotMultiplier = CGFloat(0.3) // A jot is 3pt for a 10pt font.
     
+    /// Creates table/matrix display using TeX \halign-style layout.
+    ///
+    /// ## Implementation:
+    /// 1. **Typeset cells**: Process all cells, calculate column widths
+    /// 2. **Position columns**: Apply alignment within each column
+    /// 3. **Position rows**: Stack rows with appropriate spacing
+    /// 4. **Center vertically**: Align table around axis height
+    ///
+    /// ### Examples:
+    /// - `\begin{matrix} a & b \\ c & d \end{matrix}`: 2×2 matrix
+    /// - `\begin{pmatrix}...\end{pmatrix}`: Matrix with parentheses
+    /// - Column alignment: `{lcr}` = left, center, right
+    ///
+    /// - Parameter table: The MTMathTable atom containing cells and alignment
+    /// - Returns: Positioned table display or nil if empty
     func makeTable(_ table:MTMathTable?) -> MTDisplay? {
         guard let table = table else { return nil }
         
