@@ -1828,11 +1828,49 @@ class MTTypesetter {
 
         // Position all the rows
         self.positionRows(rowDisplays, forTable:table)
-        let tableDisplay = MTMathListDisplay(withDisplays: rowDisplays, range: table!.indexRange)
+        // Append any horizontal rules (\hline) once the rows are positioned.
+        var allDisplays = rowDisplays
+        allDisplays.append(contentsOf: self.makeHorizontalLines(for: table!, rows: rowDisplays))
+
+        let tableDisplay = MTMathListDisplay(withDisplays: allDisplays, range: table!.indexRange)
         tableDisplay.position = currentPosition;
         return tableDisplay;
     }
-    
+
+    // Builds the horizontal rule displays for a table's `\hline` positions.
+    func makeHorizontalLines(for table:MTMathTable, rows:[MTDisplay]) -> [MTDisplay] {
+        guard !table.horizontalLines.isEmpty, !rows.isEmpty else { return [] }
+        let thickness = styleFont.mathTable!.fractionRuleThickness
+        let tableWidth = rows.map { $0.width }.max() ?? 0
+        let edgePadding = 0.15 * styleFont.fontSize
+
+        var countAtIndex = [Int: Int]()  // for double rules at the same boundary
+        var lines = [MTDisplay]()
+        for index in table.horizontalLines {
+            let offset = CGFloat(countAtIndex[index, default: 0]) * 2 * thickness
+            countAtIndex[index, default: 0] += 1
+
+            let y: CGFloat
+            if index <= 0 {
+                // Rule above the first row.
+                let r = rows[0]
+                y = r.position.y + r.ascent + edgePadding - offset
+            } else if index >= rows.count {
+                // Rule below the last row.
+                let r = rows[rows.count - 1]
+                y = r.position.y - r.descent - edgePadding - offset
+            } else {
+                // Rule in the gap between row index-1 and row index.
+                let above = rows[index - 1]
+                let below = rows[index]
+                let mid = ((above.position.y - above.descent) + (below.position.y + below.ascent)) / 2
+                y = mid - offset
+            }
+            lines.append(MTTableLineDisplay(width: tableWidth, thickness: thickness, position: CGPointMake(0, y)))
+        }
+        return lines
+    }
+
     // Typeset every cell in the table. As a side-effect calculate the max column width of each column.
     func typesetCells(_ table:MTMathTable?, columnWidths: inout [CGFloat]) -> [[MTDisplay]] {
         var displays = [[MTDisplay]]()

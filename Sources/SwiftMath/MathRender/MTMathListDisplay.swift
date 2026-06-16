@@ -835,7 +835,38 @@ class MTLineDisplay : MTDisplay {
     func updateInnerPosition() {
         self.inner?.position = CGPointMake(self.position.x, self.position.y);
     }
-    
+}
+
+// MARK: - MTTableLineDisplay
+
+/// Draws a horizontal rule spanning a table's width, used to render `\hline`.
+class MTTableLineDisplay : MTDisplay {
+    private let ruleWidth: CGFloat
+    private let ruleThickness: CGFloat
+
+    init(width: CGFloat, thickness: CGFloat, position: CGPoint) {
+        self.ruleWidth = width
+        self.ruleThickness = thickness
+        super.init()
+        self.position = position
+        self.width = width
+    }
+
+    override func draw(_ context: CGContext) {
+        super.draw(context)
+
+        context.saveGState()
+
+        self.textColor?.setStroke()
+
+        let path = MTBezierPath()
+        path.move(to: CGPointMake(self.position.x, self.position.y))
+        path.addLine(to: CGPointMake(self.position.x + self.ruleWidth, self.position.y))
+        path.lineWidth = self.ruleThickness
+        path.stroke()
+
+        context.restoreGState()
+    }
 }
 
 // MARK: - MTAccentDisplay

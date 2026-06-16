@@ -983,8 +983,9 @@ public class MTMathAtomFactory {
      - `cases`: 1 or 2 columns, left-aligned
      - `eqnarray`: Exactly 3 columns with r-c-l alignment
      */
-    public static func table(withEnvironment env: String?, alignment: MTColumnAlignment? = nil, rows: [[MTMathList]], error:inout NSError?) -> MTMathAtom? {
+    public static func table(withEnvironment env: String?, alignment: MTColumnAlignment? = nil, columnAlignments: [MTColumnAlignment]? = nil, horizontalLines: [Int] = [], rows: [[MTMathList]], error:inout NSError?) -> MTMathAtom? {
         let table = MTMathTable(environment: env)
+        table.horizontalLines = horizontalLines
 
         for i in 0..<rows.count {
             let row = rows[i]
@@ -1130,6 +1131,17 @@ public class MTMathAtomFactory {
                 inner.innerList = MTMathList(atoms: [space, table])
                 
                 return inner
+            } else if env == "array" {
+                table.interRowAdditionalSpacing = 0
+                table.interColumnSpacing = 18   // ≈ 2·\arraycolsep
+
+                if let columnAlignments {
+                    for (i, a) in columnAlignments.enumerated() {
+                        table.set(alignment: a, forColumn: i)
+                    }
+                }
+                // Columns beyond the spec default to center via get(alignmentForColumn:).
+                return table
             } else {
                 let message = "Unknown environment \(env)"
                 error = NSError(domain: MTParseError, code: MTParseErrors.invalidEnv.rawValue, userInfo: [NSLocalizedDescriptionKey:message])
