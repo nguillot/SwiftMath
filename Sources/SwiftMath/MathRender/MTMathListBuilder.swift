@@ -16,6 +16,8 @@ struct MTEnvProperties {
     var ended: Bool
     var numRows: Int
     var alignment: MTColumnAlignment?  // Optional alignment for starred matrix environments
+    var columnAlignments: [MTColumnAlignment]?  // Per-column alignment from the array `{lcr}` spec
+    var horizontalLines = [Int]()  // Row indices preceded by an `\hline` rule
 
     init(name: String?, alignment: MTColumnAlignment? = nil) {
         self.envName = name
@@ -461,6 +463,17 @@ public struct MTMathListBuilder {
                 return nil
             } else if char == "\\" {
                 let command = readCommand()
+                // Horizontal rules are recorded on the current environment rather
+                // than emitted as atoms, and do not break the current cell.
+                if command == "hline" || command == "hdashline" {
+                    if self.currentEnv != nil {
+                        self.currentEnv!.horizontalLines.append(self.currentEnv!.numRows)
+                        continue
+                    } else {
+                        self.setError(.missingEnv, message: "\\\(command) can only be used inside an environment")
+                        return nil
+                    }
+                }
                 let done = stopCommand(command, list:list, stopChar:stop)
                 if done != nil {
                     return done
@@ -1503,7 +1516,17 @@ public struct MTMathListBuilder {
         let oldEnv = self.currentEnv
 
         currentEnv = MTEnvProperties(name: env, alignment: alignment)
-        
+
+        // The array environment is followed by a column specification, e.g. {lcr},
+        // which must be consumed here so it is not rendered as cell content.
+        if env == "array" {
+            currentEnv!.columnAlignments = self.readArrayColumnSpecification()
+            if self.error != nil {
+                self.currentEnv = oldEnv
+                return nil
+            }
+        }
+
         var currentRow = 0
         var currentCol = 0
         
@@ -1540,7 +1563,14 @@ public struct MTMathListBuilder {
         }
         
         var error:NSError? = self.error
-        let table = MTMathAtomFactory.table(withEnvironment: currentEnv?.envName, alignment: currentEnv?.alignment, rows: rows, error: &error)
+        let table = MTMathAtomFactory.table(
+            withEnvironment: currentEnv?.envName,
+            alignment: currentEnv?.alignment,
+            columnAlignments: currentEnv?.columnAlignments,
+            horizontalLines: currentEnv?.horizontalLines ?? [],
+            rows: rows,
+            error: &error
+        )
         if table == nil && self.error == nil {
             self.error = error
             return nil
@@ -1548,7 +1578,33 @@ public struct MTMathListBuilder {
         self.currentEnv = oldEnv
         return table
     }
-    
+
+    /// Reads an array column specification such as `{lcr}` or `{c|c|c}`.
+    /// Vertical bars and whitespace are ignored; unknown specifiers raise an error.
+    mutating func readArrayColumnSpecification() -> [MTColumnAlignment]? {
+        self.skipSpaces()
+        guard self.expectCharacter("{") else {
+            self.setError(.characterNotFound, message: "Missing column specification for array")
+            return nil
+        }
+        var alignments = [MTColumnAlignment]()
+        while self.hasCharacters {
+            let ch = self.getNextCharacter()
+            switch ch {
+                case "l": alignments.append(.left)
+                case "c": alignments.append(.center)
+                case "r": alignments.append(.right)
+                case "|", " ", "\t", "\n": continue  // separators / whitespace ignored
+                case "}": return alignments
+                default:
+                    self.setError(.invalidEnv, message: "Unknown column specifier '\(ch)' in array")
+                    return nil
+            }
+        }
+        self.setError(.characterNotFound, message: "Missing } in array column specification")
+        return nil
+    }
+
     mutating func getBoundaryAtom(_ delimiterType: String) -> MTMathAtom? {
         let delim = self.readDelimiter()
         if delim == nil {
