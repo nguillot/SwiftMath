@@ -504,7 +504,12 @@ class MTTypesetter {
         var preprocessed = [MTMathAtom]() //  arrayWithCapacity:ml.atoms.count)
         var prevNode:MTMathAtom! = nil
         preprocessed.reserveCapacity(ml!.atoms.count)
-        for atom in ml!.atoms {
+        for originalAtom in ml!.atoms {
+            // Operate on a copy so preprocessing never mutates the caller's atoms. fuse() does
+            // `nucleus += ...` in place, which makes this function non-idempotent: running it twice
+            // on the same list (e.g. inner lists tokenized more than once) re-fuses already-fused
+            // runs and doubles them ("1375" -> "1375375"). Copying keeps it pure and repeatable.
+            let atom: MTMathAtom = originalAtom.copy()
             if atom.type == .variable || atom.type == .number {
                 // This is not a TeX type node. TeX does this during parsing the input.
                 // switch to using the italic math font
