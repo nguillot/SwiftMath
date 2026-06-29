@@ -504,7 +504,12 @@ class MTTypesetter {
         var preprocessed = [MTMathAtom]() //  arrayWithCapacity:ml.atoms.count)
         var prevNode:MTMathAtom! = nil
         preprocessed.reserveCapacity(ml!.atoms.count)
-        for atom in ml!.atoms {
+        for originalAtom in ml!.atoms {
+            // Operate on a copy so preprocessing never mutates the caller's atoms. fuse() does
+            // `nucleus += ...` in place, which makes this function non-idempotent: running it twice
+            // on the same list (e.g. inner lists tokenized more than once) re-fuses already-fused
+            // runs and doubles them ("1375" -> "1375375"). Copying keeps it pure and repeatable.
+            let atom: MTMathAtom = originalAtom.copy()
             if atom.type == .variable || atom.type == .number {
                 // This is not a TeX type node. TeX does this during parsing the input.
                 // switch to using the italic math font
@@ -1230,6 +1235,12 @@ class MTTypesetter {
 
         let glyphHeight: CGFloat
 
+        // Tokenize the inner content at most once and reuse it below. Tokenizing twice would run
+        // preprocessMathList twice over the same (non-finalized) inner atoms; because that step
+        // fuses atoms in place (nucleus += ...), a second pass re-fuses already-fused runs and
+        // corrupts content — e.g. matrix cell "1375" rendered as "1375375".
+        var innerListDisplay: MTMathListDisplay? = nil
+
         // Check if we have an explicit delimiter height (from \big, \Big, etc.)
         if let delimiterMultiplier = inner!.delimiterHeight {
             // delimiterHeight is a multiplier (e.g., 1.2, 1.8, 2.4, 3.0)
@@ -1237,7 +1248,7 @@ class MTTypesetter {
             glyphHeight = styleFont.fontSize * delimiterMultiplier
         } else {
             // Calculate height based on inner content (for \left...\right)
-            let innerListDisplay = MTTypesetter.createLineForMathList(inner!.innerList, font:font, style:style, cramped:cramped, spaced:true, maxWidth:maxWidth)
+            innerListDisplay = MTTypesetter.createLineForMathList(inner!.innerList, font:font, style:style, cramped:cramped, spaced:true, maxWidth:maxWidth)
             let axisHeight = styleFont.mathTable!.axisHeight
             // delta is the max distance from the axis
             let delta = max(innerListDisplay!.ascent - axisHeight, innerListDisplay!.descent + axisHeight);
@@ -1267,7 +1278,7 @@ class MTTypesetter {
         // Only include inner content if not using explicit delimiter height
         // (explicit height commands like \big produce standalone delimiters)
         if inner!.delimiterHeight == nil {
-            let innerListDisplay = MTTypesetter.createLineForMathList(inner!.innerList, font:font, style:style, cramped:cramped, spaced:true, maxWidth:maxWidth)
+            // Reuse the display already built for delimiter sizing instead of tokenizing again.
             innerListDisplay!.position = position;
             position.x += innerListDisplay!.width;
             innerElements.append(innerListDisplay!)
