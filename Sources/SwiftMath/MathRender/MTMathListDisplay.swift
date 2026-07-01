@@ -463,7 +463,11 @@ class MTRadicalDisplay : MTDisplay {
     // the degree is set, so caching it is safe.
     private var _degreeKernBefore:CGFloat=0
     private var _degreeRaise:CGFloat=0
-    
+    // Ascent of the radical proper (glyph + rule), independent of any degree that may sit above it.
+    // The horizontal rule is always drawn against this, so growing `self.ascent` to include the
+    // degree (see setDegree) doesn't move the rule off the glyph. 0 means "no degree, use ascent".
+    private var _ruleAscent:CGFloat=0
+
     var topKern:CGFloat=0
     var lineThickness:CGFloat=0
     
@@ -501,6 +505,17 @@ class MTRadicalDisplay : MTDisplay {
         _degreeKernBefore = kernBefore;
         _degreeRaise = raise;
         self.updateDegreePosition()
+
+        // The degree sits `raise` above the baseline; its top is `raise + degree.ascent`.
+        // Grow the radical's reported ascent so callers (e.g. a fraction using this radical as its
+        // denominator) leave room for the degree instead of letting it overlap content above.
+        // The rule keeps using the original ascent via _ruleAscent (see draw).
+        let degreeTop = raise + (degree?.ascent ?? 0)
+        if degreeTop > self.ascent {
+            _ruleAscent = self.ascent   // preserve the rule position before growing
+            self.ascent = degreeTop
+        }
+
         // Update the width by the _radicalShift
         self.width = _radicalShift + _radicalGlyph!.width + self.radicand!.width;
         // update the position of the radicand
@@ -544,8 +559,11 @@ class MTRadicalDisplay : MTDisplay {
         let heightFromTop = topKern;
 
         // draw the horizontal line with the given thickness
+        // Use the radical's own ascent (not self.ascent, which may have been grown to include a
+        // degree) so the rule stays anchored to the glyph rather than following the degree upward.
+        let ruleAscent = _ruleAscent > 0 ? _ruleAscent : self.ascent
         let path = MTBezierPath()
-        let lineStart = CGPointMake(_radicalGlyph!.width, self.ascent - heightFromTop - self.lineThickness / 2); // subtract half the line thickness to center the line
+        let lineStart = CGPointMake(_radicalGlyph!.width, ruleAscent - heightFromTop - self.lineThickness / 2); // subtract half the line thickness to center the line
         let lineEnd = CGPointMake(lineStart.x + self.radicand!.width, lineStart.y);
         path.move(to: lineStart)
         path.addLine(to: lineEnd)

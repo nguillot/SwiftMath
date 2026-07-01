@@ -424,7 +424,10 @@ final class MTTypesetterTests: XCTestCase {
         }
 
         // dimensions (width increases with degree)
-        XCTAssertEqual(display.ascent, 19.34, accuracy: 0.01)
+        // Ascent now includes the degree glyph, which sits above the radical. For this short
+        // radicand ("1") the degree protrudes, so the reported ascent grows accordingly
+        // (previously 19.34, when the degree was — incorrectly — excluded from the ascent).
+        XCTAssertEqual(display.ascent, 24.048, accuracy: 0.01)
         XCTAssertEqual(display.descent, 1.46, accuracy: 0.01)
         XCTAssertGreaterThan(display.width, 26, "Width should include degree")
         XCTAssertLessThan(display.width, 35, "Width should be reasonable")
