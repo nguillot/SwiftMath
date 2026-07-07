@@ -844,7 +844,11 @@ class MTAtomTokenizer {
         if radical.degree != nil {
             // Use .script style (71% size) instead of .scriptOfScript (50% size)
             // This matches TeX standard for radical degrees
-            let degree = MTTypesetter.createLineForMathList(radical.degree, font: font, style: .script)
+            // The tokenization path renders text with the font as passed, so the font
+            // must be scaled down for the script style here (as renderScript does).
+            let degreeFontSize = MTTypesetter.getStyleSize(.script, font: font)
+            let degreeFont = font.copy(withSize: degreeFontSize)
+            let degree = MTTypesetter.createLineForMathList(radical.degree, font: degreeFont, style: .script)
             display.setDegree(degree, fontMetrics: font.mathTable)
         }
 

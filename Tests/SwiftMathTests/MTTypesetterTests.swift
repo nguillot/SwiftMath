@@ -427,7 +427,8 @@ final class MTTypesetterTests: XCTestCase {
         // Ascent now includes the degree glyph, which sits above the radical. For this short
         // radicand ("1") the degree protrudes, so the reported ascent grows accordingly
         // (previously 19.34, when the degree was — incorrectly — excluded from the ascent).
-        XCTAssertEqual(display.ascent, 24.048, accuracy: 0.01)
+        // The degree is typeset at script size (71%), matching a first-level superscript.
+        XCTAssertEqual(display.ascent, 20.052, accuracy: 0.01)
         XCTAssertEqual(display.descent, 1.46, accuracy: 0.01)
         XCTAssertGreaterThan(display.width, 26, "Width should include degree")
         XCTAssertLessThan(display.width, 35, "Width should be reasonable")
@@ -536,6 +537,67 @@ final class MTTypesetterTests: XCTestCase {
                 }
             }
         }
+    }
+
+    /// Recursively finds the first radical display in a display tree.
+    private func firstRadicalDisplay(in display: MTDisplay) -> MTRadicalDisplay? {
+        if let radical = display as? MTRadicalDisplay { return radical }
+        if let list = display as? MTMathListDisplay {
+            for sub in list.subDisplays {
+                if let found = firstRadicalDisplay(in: sub) { return found }
+            }
+        }
+        return nil
+    }
+
+    /// Recursively finds the first superscript math list display in a display tree.
+    private func firstSuperscriptDisplay(in display: MTDisplay) -> MTMathListDisplay? {
+        if let list = display as? MTMathListDisplay {
+            if list.type == .superscript { return list }
+            for sub in list.subDisplays {
+                if let found = firstSuperscriptDisplay(in: sub) { return found }
+            }
+        }
+        return nil
+    }
+
+    /// Returns the font size of the first rendered text line found in a display tree.
+    private func firstFontSize(in display: MTDisplay) -> CGFloat? {
+        if let line = display as? MTCTLineDisplay {
+            guard let attrString = line.attributedString, attrString.length > 0,
+                  let value = attrString.attribute(NSAttributedString.Key(kCTFontAttributeName as String), at: 0, effectiveRange: nil)
+            else { return nil }
+            return CTFontGetSize(value as! CTFont)
+        }
+        if let list = display as? MTMathListDisplay {
+            for sub in list.subDisplays {
+                if let size = firstFontSize(in: sub) { return size }
+            }
+        }
+        return nil
+    }
+
+    /// The degree of an nth-root must be typeset at script size, the same size as a
+    /// first-level superscript. Regression test for "y^8=8\sqrt[8]{x}" where the degree "8"
+    /// was rendered at full size, as large as the base "8" next to the radical.
+    func testRadicalDegreeIsScriptSize() throws {
+        let mathList = MTMathListBuilder.build(fromString: "y^8=8\\sqrt[8]{x}")
+        XCTAssertNotNil(mathList)
+        let display = try XCTUnwrap(MTTypesetter.createLineForMathList(mathList, font: self.font, style: .display))
+
+        let radical = try XCTUnwrap(firstRadicalDisplay(in: display), "Expected a radical display")
+        let degree = try XCTUnwrap(radical.degree, "Expected the radical to have a degree")
+        let degreeFontSize = try XCTUnwrap(firstFontSize(in: degree), "Expected the degree to contain rendered text")
+
+        let superscript = try XCTUnwrap(firstSuperscriptDisplay(in: display), "Expected a superscript display")
+        let superscriptFontSize = try XCTUnwrap(firstFontSize(in: superscript), "Expected the superscript to contain rendered text")
+
+        // The degree must be smaller than the base text...
+        XCTAssertLessThan(degreeFontSize, self.font.fontSize,
+                          "Radical degree should be smaller than the base font size")
+        // ...and exactly the size of a first-level superscript.
+        XCTAssertEqual(degreeFontSize, superscriptFontSize, accuracy: 0.01,
+                       "Radical degree (\(degreeFontSize)pt) should be the same size as a superscript (\(superscriptFontSize)pt)")
     }
 
     func testFraction() throws {
